@@ -6,8 +6,8 @@ from model import TransformerModel
 from dataset import DialogueDataset
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-tokenizer = BertTokenizer.from_pretrained("C:\\Users\\24093\\Desktop\\LLM\\bertbert_base_chinese")
-dataset = DialogueDataset(r"C:\Users\24093\Downloads\LCCC-large\LCCD.json", tokenizer, max_length=128)
+tokenizer = BertTokenizer.from_pretrained(bertbert_base_chinese)
+dataset = DialogueDataset(LCCC-large\LCCD.json", tokenizer, max_length=128)
 dataloader = DataLoader(dataset, batch_size=8, shuffle=True)
 
 model = TransformerModel(
@@ -16,7 +16,7 @@ model = TransformerModel(
     nhead=8,
     num_layers=24
 )
-bert_model = BertModel.from_pretrained("C:\\Users\\24093\\Desktop\\LLM\\bertbert_base_chinese")
+bert_model = BertModel.from_pretrained(bertbert_base_chinese")
 model.embedding = nn.Embedding.from_pretrained(bert_model.embeddings.word_embeddings.weight, freeze=True)
 model = model.to(device)
 
