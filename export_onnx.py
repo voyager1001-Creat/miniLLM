@@ -3,16 +3,16 @@ from model import TransformerModel
 from transformers import BertTokenizer, BertModel
 import torch.nn as nn
 
-tokenizer = BertTokenizer.from_pretrained("C:\\Users\\24093\\Desktop\\LLM\\bertbert_base_chinese")
+tokenizer = BertTokenizer.from_pretrained("bertbert_base_chinese")
 model = TransformerModel(
     vocab_size=tokenizer.vocab_size,
     d_model=768,
     nhead=8,
     num_layers=24
 )
-bert_model = BertModel.from_pretrained("C:\\Users\\24093\\Desktop\\LLM\\bertbert_base_chinese")
+bert_model = BertModel.from_pretrained("bertbert_base_chinese")
 model.embedding = nn.Embedding.from_pretrained(bert_model.embeddings.word_embeddings.weight, freeze=True)
-model.load_state_dict(torch.load(r"C:\Users\24093\Desktop\LLM\miniLLM.pth", map_location="cpu"))
+model.load_state_dict(torch.load(r"miniLLM.pth", map_location="cpu"))
 model.eval()
 
 dummy_input = torch.ones(1, 64, dtype=torch.long)
