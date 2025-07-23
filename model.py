@@ -132,7 +132,7 @@ if __name__ == "__main__":
 
 
 #模型实例
-    tokenizer = BertTokenizer.from_pretrained("C:\\Users\\24093\\Desktop\\LLM\\bertbert_base_chinese")
+    tokenizer = BertTokenizer.from_pretrained("bertbert_base_chinese")
     model = TransformerModel(
     vocab_size=tokenizer.vocab_size,  # 需传入词表大小
     d_model=768,
@@ -141,7 +141,7 @@ if __name__ == "__main__":
 )
     input_text = "你好，世界！"  # 输入文本
     # 用BERT权重初始化嵌入层
-    bert_model = BertModel.from_pretrained("C:\\Users\\24093\\Desktop\\LLM\\bertbert_base_chinese")
+    bert_model = BertModel.from_pretrained("bertbert_base_chinese")
     input_ids = tokenizer.encode(input_text, return_tensors='pt')  # [1, seq_len]
     model.embedding = nn.Embedding.from_pretrained(bert_model.embeddings.word_embeddings.weight, freeze=True)  # 冻结嵌入层
 
