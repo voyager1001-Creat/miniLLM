@@ -14,18 +14,22 @@ class AlpacaDataset(Dataset):
 
     def __getitem__(self, idx):
         item = self.samples[idx]
+        # 选择中文字段
+        instruction = item.get("zh_instruction", "")
+        input_text = item.get("zh_input", "")
+        target = item.get("zh_output", "")
+
         # 拼接prompt
-        if item.get("input", "").strip():
-            prompt = f"{item['instruction']}\n{item['input']}"
+        if input_text.strip():
+            prompt = f"{instruction}\n{input_text}"
         else:
-            prompt = item['instruction']
-        target = item['output']
+            prompt = instruction
 
         # 编码
         prompt_ids = self.tokenizer.encode(prompt, add_special_tokens=True, max_length=self.max_length, truncation=True)
         target_ids = self.tokenizer.encode(target, add_special_tokens=True, max_length=self.max_length, truncation=True)
 
-        # 拼接输入和标签（SFT常用方式：输入+输出，label为输入部分为-100，输出部分为真实token）
+        # 拼接输入和标签
         input_ids = prompt_ids + target_ids
         input_ids = input_ids[:self.max_length]
         labels = [-100] * len(prompt_ids) + target_ids

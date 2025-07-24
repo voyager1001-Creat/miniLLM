@@ -6,146 +6,189 @@ from transformers import BertModel, BertTokenizer
 # Positional Encoding for Transformer models
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, dropout, max_len=5000):
-        # 正弦位置编码。d_model:输入的特征维度 max_len:最大序列长度
         super(PositionalEncoding, self).__init__()
         self.dropout = nn.Dropout(p=dropout)
-
-        # 生成位置编码矩阵
-        pe = torch.zeros(max_len, d_model) # 形状（max_len, d_model）
+        pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len).unsqueeze(1).float()
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
-
-        pe[:, 0::2] = torch.sin(position * div_term) # 正弦编码在偶数位置
-        pe[:, 1::2] = torch.cos(position * div_term) # 余弦编码在奇数位置
-
-        pe = pe.unsqueeze(0)  # 添加批次维度，现状（1, max_len, d_model）
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0)
         self.register_buffer('pe', pe)
 
-    # 前向传播函数。 x:输入的特征矩阵，形状（batch_size, seq_len, d_model）
     def forward(self, x):
         x = x + self.pe[:, :x.size(1)]
-        # returns 添加位置编码后的张量
         return self.dropout(x)
     
-# 多头注意力机制
 class MultiHeadAttention(nn.Module):
-    def __init__(self, d_model, nhead):  # d_model:特征维度 nhead:头数
+    def __init__(self, d_model, nhead):
         super(MultiHeadAttention, self).__init__()
-        assert d_model % nhead == 0  # d_model 必须被 nhead 整除
+        assert d_model % nhead == 0
         self.d_model = d_model
         self.nhead = nhead
-        self.head_dim = d_model // nhead # 每个头的维数
+        self.head_dim = d_model // nhead
+        self.q_linear = nn.Linear(d_model, d_model)
+        self.k_linear = nn.Linear(d_model, d_model)
+        self.v_linear = nn.Linear(d_model, d_model)
+        self.out_linear = nn.Linear(d_model, d_model)
 
-        # 定义线性变换层
-        self.q_linear = nn.Linear(d_model, d_model) # 定义查询变换
-        self.k_linear = nn.Linear(d_model, d_model) # 定义键变换
-        self.v_linear = nn.Linear(d_model, d_model) # 定义值变换
-        self.out_linear = nn.Linear(d_model, d_model) # 定义输出变换
+    def scale_dot_product_attention(self, query, key, value, attn_mask=None):
+        scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(self.head_dim)
+        if attn_mask is not None:
+            # attn_mask: (batch, seq_len, seq_len) or (seq_len, seq_len)
+            # scores: (batch, nhead, seq_len, seq_len)
+            if attn_mask.dim() == 2:
+                attn_mask = attn_mask.unsqueeze(0).unsqueeze(0)
+            elif attn_mask.dim() == 3:
+                attn_mask = attn_mask.unsqueeze(1)
+            scores = scores + attn_mask
+        # 在softmax前，确保每一行至少有一个非-inf
+        scores[scores != scores] = 0  # 先清理已有的nan
+        mask_all_inf = torch.isinf(scores).all(dim=-1, keepdim=True)
+        scores = scores.masked_fill(mask_all_inf, 0)
+        attn_weights = torch.softmax(scores, dim=-1)
+        attn_weights = torch.where(torch.isnan(attn_weights), torch.zeros_like(attn_weights), attn_weights)
+        context = torch.matmul(attn_weights, value)
+        return context, attn_weights
 
-    def scale_dot_product_attention(self, query, key, value, mask=None):
-        scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(self.head_dim) # 缩放点积注意力
-        if mask is not None:
-            scores = scores.masked_fill(mask == 0, -1e9)
-        attn_weights = torch.softmax(scores, dim=-1) # softmax归一化
-        context = torch.matmul(attn_weights, value) # 加权求和，计算上下文向量
-        return context,attn_weights  # 返回上下文向量和注意力权重
-
-    def forward(self, query, key, value, mask=None):
+    def forward(self, query, key, value, attn_mask=None):
         batch_size = query.size(0)
-
-        # 线性变换
-        query = self.q_linear(query).view(batch_size, -1, self.nhead, self.head_dim).transpose(1, 2)
-        key = self.k_linear(key).view(batch_size, -1, self.nhead, self.head_dim).transpose(1, 2)
-        value = self.v_linear(value).view(batch_size, -1, self.nhead, self.head_dim).transpose(1, 2)
-
-        context, attn_weights = self.scale_dot_product_attention(query, key, value, mask) # 调用scale_dot_product_attention函数计算上下文和注意力权重
-        context = context.transpose(1, 2).contiguous().view(batch_size, -1, self.d_model) # 合并头
-
-        return self.out_linear(context)  # 返回形状为 (batch_size, seq_len, d_model) 的张量
+        seq_len = query.size(1)
+        query = self.q_linear(query).view(batch_size, seq_len, self.nhead, self.head_dim).transpose(1, 2)
+        key = self.k_linear(key).view(batch_size, seq_len, self.nhead, self.head_dim).transpose(1, 2)
+        value = self.v_linear(value).view(batch_size, seq_len, self.nhead, self.head_dim).transpose(1, 2)
+        context, attn_weights = self.scale_dot_product_attention(query, key, value, attn_mask)
+        context = context.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
+        return self.out_linear(context)
     
-#Transformer层
 class TransformerLayer(nn.Module):
-    def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1): # 定义单个Transfomer层。d_model:特征维度 nhead:头数 dim_feedforward:前馈网络的维度 dropout:dropout比率
+    def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1):
         super(TransformerLayer, self).__init__()
-        self.self_attn = MultiHeadAttention(d_model, nhead)  # 自注意力机制
-        self.norm1 = nn.LayerNorm(d_model)  # 层归一化
-        self.dropout1 = nn.Dropout(dropout)  # dropout层
-
-        #前馈子层
+        self.self_attn = MultiHeadAttention(d_model, nhead)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.dropout1 = nn.Dropout(dropout)
         self.feed_forward = nn.Sequential(
-            nn.Linear(d_model, dim_feedforward),  # 前馈网络的第一层
-            nn.ReLU(),  # 激活函数
-            nn.Linear(dim_feedforward, d_model)  # 前馈网络的第二层
+            nn.Linear(d_model, dim_feedforward),
+            nn.ReLU(),
+            nn.Linear(dim_feedforward, d_model)
         )
-        self.norm2 = nn.LayerNorm(d_model)  # 层归一化
-        self.dropout2 = nn.Dropout(dropout)  # dropout层
+        self.norm2 = nn.LayerNorm(d_model)
+        self.dropout2 = nn.Dropout(dropout)
 
-    # 生成因果掩码（防止看到未来信息）
-    def generate_causal_mask(self, sz):
-        mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
-        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
+    @staticmethod
+    def generate_causal_mask(seq_len):
+        mask = torch.zeros(seq_len, seq_len)
+        future = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool()
+        mask = mask.masked_fill(future, float("-inf"))
         return mask
 
-    def forward(self, src, src_mask=None):
-        if src_mask is None:
-            src_mask = self.generate_causal_mask(src.size(1)).to(src.device)
-        src2 = self.self_attn(src, src, src, src_mask)  # 自注意力机制
-        src = src + self.dropout1(src2)  # 残差连接
-        src = self.norm1(src)  # 归一化
+    @staticmethod
+    def generate_pad_mask(input_ids, pad_token_id=0):
+        mask = (input_ids == pad_token_id)
+        mask = mask.unsqueeze(1).unsqueeze(2)
+        mask = mask.float().masked_fill(mask, float('-inf'))
+        return mask
 
-        feed_forward = self.feed_forward(src)  # 前馈网络
-        src = src + self.dropout2(feed_forward)  # 残差连接
-        src = self.norm2(src)  # 归一化
-
-        return src  # 返回形状为 (batch_size, seq_len, d_model) 的张量
+    def forward(self, src, causal_mask=None, pad_mask=None):
+        batch_size, seq_len, _ = src.size()
+        attn_mask = None
+        if causal_mask is not None:
+            attn_mask = causal_mask.unsqueeze(0).expand(batch_size, seq_len, seq_len)
+        if pad_mask is not None:
+            pad_mask_expanded = pad_mask.squeeze(1).expand(batch_size, seq_len, seq_len)
+            if attn_mask is not None:
+                attn_mask = attn_mask + pad_mask_expanded
+            else:
+                attn_mask = pad_mask_expanded
+        src2 = self.self_attn(src, src, src, attn_mask)
+        src = src + self.dropout1(src2)
+        src = self.norm1(src)
+        feed_forward = self.feed_forward(src)
+        src = src + self.dropout2(feed_forward)
+        src = self.norm2(src)
+        return src
     
-#完整Transformer模型
 class TransformerModel(nn.Module):
-    def __init__(self, vocab_size, d_model, nhead, num_layers, dim_feedforward=2048, dropout=0.1): # 定义完整的Transformer模型。d_model:特征维度 nhead:头数 num_layers:Transformer层数 dim_feedforward:前馈网络的维度 dropout:dropout比率
+    def __init__(self, vocab_size, d_model, nhead, num_layers, dim_feedforward=2048, dropout=0.1, pad_token_id=0):
         super(TransformerModel, self).__init__()
-        self.d_model = d_model  # 保存d_model以便后续使用
-        self.embedding = nn.Embedding(vocab_size, d_model)  # 词嵌入层
-        self.pos_encoder = PositionalEncoding(d_model, dropout)  # 位置编码
-
+        self.d_model = d_model
+        self.embedding = nn.Embedding(vocab_size, d_model)
+        self.pos_encoder = PositionalEncoding(d_model, dropout)
+        self.pad_token_id = pad_token_id
         self.layers = nn.ModuleList(
             [TransformerLayer(d_model, nhead, dim_feedforward, dropout)
-            for _ in range(num_layers)])  # 多个Transformer层
-        self.fc_out = nn.Linear(d_model, vocab_size)  # 输出层
+            for _ in range(num_layers)])
+        self.fc_out = nn.Linear(d_model, vocab_size)
 
-    def forward(self, input_ids, src_mask=None):
-        # 获取词嵌入
+    def forward(self, input_ids, causal_mask=None, pad_mask=None):
         embeddings = self.embedding(input_ids) * math.sqrt(self.d_model)
-        embeddings = self.pos_encoder(embeddings)  # 添加位置编码
-
-        mask = src_mask
+        embeddings = self.pos_encoder(embeddings)
+        if pad_mask is None:
+            pad_mask = TransformerLayer.generate_pad_mask(input_ids, self.pad_token_id).to(embeddings.device)
+        mask = causal_mask
         for layer in self.layers:
-            embeddings = layer(embeddings, mask)  # 通过每个Transformer层
-        return self.fc_out(embeddings)  # 输出词表概率
-
-#训练辅助函数
-def generate_mask(len):
-    # 生成自注意力掩码
-    mask = torch.triu(torch.ones(len, len), diagonal=1).bool()  # 上三角矩阵
-    return mask  # 返回形状为 (len, len) 的布尔掩码矩阵
+            embeddings = layer(embeddings, mask, pad_mask)
+        return self.fc_out(embeddings)
 
 if __name__ == "__main__":
+    # 设置随机种子，保证可复现
+    torch.manual_seed(42)
+    import numpy as np
+    np.random.seed(42)
 
-
-#模型实例
-    tokenizer = BertTokenizer.from_pretrained("bertbert_base_chinese")
+    tokenizer = BertTokenizer.from_pretrained("C:\\Users\\24093\\Desktop\\LLM\\bertbert_base_chinese")
+    bert_model = BertModel.from_pretrained("C:\\Users\\24093\\Desktop\\LLM\\bertbert_base_chinese")
+    vocab_size = tokenizer.vocab_size
+    pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
     model = TransformerModel(
-    vocab_size=tokenizer.vocab_size,  # 需传入词表大小
-    d_model=768,
-    nhead=8,
-    num_layers=6
-)
-    input_text = "你好，世界！"  # 输入文本
-    # 用BERT权重初始化嵌入层
-    bert_model = BertModel.from_pretrained("bertbert_base_chinese")
-    input_ids = tokenizer.encode(input_text, return_tensors='pt')  # [1, seq_len]
-    model.embedding = nn.Embedding.from_pretrained(bert_model.embeddings.word_embeddings.weight, freeze=True)  # 冻结嵌入层
+        vocab_size=tokenizer.vocab_size,
+        d_model=768,
+        nhead=8,
+        num_layers=6,
+        pad_token_id=pad_token_id
+    )
+    # 关键：模型参数初始化为相同值，避免未训练参数导致的差异
+    def init_weights(m):
+        if isinstance(m, nn.Linear):
+            nn.init.constant_(m.weight, 0.02)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.Embedding):
+            nn.init.constant_(m.weight, 0.02)
+    model.apply(init_weights)
 
-# 测试模型
-    mask = generate_mask(input_ids.shape[1])  # 根据实际输入长度生成掩码
-    output = model(input_ids, mask)  # 前向传播
-    print(output.shape)  # 输出形状应为 (1, 20, vocab_size)
+    layer = TransformerLayer(d_model=8, nhead=2)
+    causal_mask = layer.generate_causal_mask(5)
+    print(causal_mask)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    model.eval()  # 关键：关闭dropout，保证推理一致性
+
+    L = 10
+    K = 5
+    A = torch.randint(0, vocab_size, (1, L)).to(device)
+    B = torch.cat([A, torch.randint(0, vocab_size, (1, K)).to(device)], dim=1)
+    padA = torch.full((1, L), pad_token_id, dtype=torch.long).to(device)
+    padB = torch.cat([padA, torch.full((1, K), pad_token_id, dtype=torch.long).to(device)], dim=1)
+
+    # 关键修正：为B构造一个只让前L个token能看到的causal mask
+    causal_mask_B = torch.zeros(B.size(1), B.size(1), device=device)
+    causal_mask_B[:L, :L] = TransformerLayer.generate_causal_mask(L)
+
+    outA = model(A)[:, :L, :]
+    outB = model(B, causal_mask=causal_mask_B)[:, :L, :]
+    outPadA = model(padA)[:, :L, :]
+    outPadB = model(padB, causal_mask=causal_mask_B)[:, :L, :]
+
+    # 检查差异
+    diff = (outA - outB).abs().max().item()
+    print("最大差异:", diff)
+    if not torch.allclose(outA, outB, atol=1e-5):
+        print("警告：outA和outB的结果有较大差异，请检查模型实现或输入数据，必要时需要修改代码以保证两者输出一致。")
+    assert torch.allclose(outA, outB, atol=1e-5)
+    print("outPadA.shape:", outPadA.shape)
+    print("outPadB.shape:", outPadB.shape)
+    print("最大差异:", (outPadA - outPadB).abs().max().item())
+    print("allclose:", torch.allclose(outPadA, outPadB, atol=1e-5))
+    assert (outPadA - outPadB).abs().max().item() < 1e-5
+    assert torch.allclose(outPadA, outPadB, atol=1e-6)
