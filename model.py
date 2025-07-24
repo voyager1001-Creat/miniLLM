@@ -131,13 +131,16 @@ class TransformerModel(nn.Module):
         return self.fc_out(embeddings)
 
 if __name__ == "__main__":
+
+
+    
     # 设置随机种子，保证可复现
     torch.manual_seed(42)
     import numpy as np
     np.random.seed(42)
 
-    tokenizer = BertTokenizer.from_pretrained("C:\\Users\\24093\\Desktop\\LLM\\bertbert_base_chinese")
-    bert_model = BertModel.from_pretrained("C:\\Users\\24093\\Desktop\\LLM\\bertbert_base_chinese")
+    tokenizer = BertTokenizer.from_pretrained("bert_base_chinese")
+    bert_model = BertModel.from_pretrained("bert_base_chinese")
     vocab_size = tokenizer.vocab_size
     pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
     model = TransformerModel(
