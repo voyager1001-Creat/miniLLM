@@ -9,11 +9,11 @@ import glob
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 tokenizer = BertTokenizer.from_pretrained(
-    "C:/Users/24093/Desktop/LLM/bertbert_base_chinese",
+    "bert_base_chinese",
     local_files_only=True
 )
-dataset = DialogueDataset(r"C:/Users/24093/Downloads/LCCC-large/LCCD.json", tokenizer, max_length=128)
-save_dir = r"C:/Users/24093/Desktop/LLM/model"
+dataset = DialogueDataset(r"LCCC-large/LCCD.json", tokenizer, max_length=128)
+save_dir = r"model"
 os.makedirs(save_dir, exist_ok=True)
 saved_files = []
 max_keep = 10
