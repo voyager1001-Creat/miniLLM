@@ -20,7 +20,7 @@ model = TransformerModel(
     num_layers=36
 )
 checkpoint = torch.load(
-    r"C:\Users\24093\Desktop\LLM\model\transformer_epoch0_step10000.pth",
+    r"transformer_epoch{}_step{}.pth",
     map_location=device
 )
 model.load_state_dict(checkpoint)
